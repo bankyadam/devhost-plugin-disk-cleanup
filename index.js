@@ -25,13 +25,15 @@ async function homebrew(ctx) {
     const path = r.stdout.trim();
     return r.code === 0 && path.startsWith('/') ? { path, bytes: await du(ctx, path) } : null;
 }
+/** npm starts with `#!/usr/bin/env node`: over ssh (the desktop app) PATH has no nvm Node, so put devhost's first. */
+const npmEnv = (ctx) => ({ PATH: `${dirname(ctx.nodePath)}:${process.env.PATH ?? '/usr/bin:/bin'}` });
 /** npm next to the Node devhost runs on (an nvm one is on no default PATH). */
 const npmFor = (ctx) => {
     const npmPath = join(dirname(ctx.nodePath), 'npm');
     return existsSync(npmPath) ? npmPath : 'npm';
 };
 async function npm(ctx) {
-    const r = await ctx.exec.query(npmFor(ctx), ['config', 'get', 'cache']);
+    const r = await ctx.exec.query(npmFor(ctx), ['config', 'get', 'cache'], { env: npmEnv(ctx) });
     const root = r.stdout.trim();
     if (r.code !== 0 || !root.startsWith('/'))
         return null;
@@ -109,7 +111,7 @@ function describe(r) {
 const data = (r) => ({ reclaimableBytes: reclaimable(r), homebrew: r.homebrew, npm: r.npm, worktrees: r.worktrees });
 export const diskCleanup = {
     name: 'disk-cleanup',
-    version: '1.0.0',
+    version: '1.0.1',
     description: 'Free disk space: package caches and old Remote Control worktrees',
     actions: [
         {
@@ -134,7 +136,7 @@ export const diskCleanup = {
                 if (r.homebrew && r.homebrew.bytes > 0)
                     await ctx.exec.exec('brew', ['cleanup', '-s', '--prune=all'], { env: brewEnv, progress: true });
                 if (r.npm && r.npm.bytes > 0)
-                    await ctx.exec.exec(npmFor(ctx), ['cache', 'clean', '--force']);
+                    await ctx.exec.exec(npmFor(ctx), ['cache', 'clean', '--force'], { env: npmEnv(ctx) });
                 const removed = [];
                 for (const w of r.worktrees.filter((x) => !x.keep)) {
                     const env = ctx.environments.find((e) => e.name === w.env);

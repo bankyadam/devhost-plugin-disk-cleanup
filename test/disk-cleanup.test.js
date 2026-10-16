@@ -24,7 +24,7 @@ async function setup({ dryRun = false, options = {} } = {}) {
     rules: [
       ['brew --cache', { stdout: '/Users/x/Library/Caches/Homebrew\n' }],
       ['du -sk /Users/x/Library/Caches/Homebrew', { stdout: '2097152\t/Users/x/Library/Caches/Homebrew\n' }],
-      ['npm config get cache', { stdout: '/Users/x/.npm\n' }],
+      ['npm config get cache', (c) => (c.opts?.env?.PATH?.startsWith('/nowhere:') ? { stdout: '/Users/x/.npm\n' } : { code: 127 })],
       ['du -sk /Users/x/.npm/_cacache', { stdout: '1048576\t/Users/x/.npm/_cacache\n' }],
       [/^du -sk .*worktrees/, { stdout: '4194304\tx\n' }],
       ['lsof', { stdout: `p1\nn${wt('busy')}/src\n` }],
