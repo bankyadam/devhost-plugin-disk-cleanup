@@ -1,0 +1,11 @@
+{
+  "name": "devhost-plugin-disk-cleanup",
+  "version": "1.0.0",
+  "description": "devhost plugin: Free disk space: package caches and old Remote Control worktrees",
+  "type": "module",
+  "main": "index.js",
+  "private": true,
+  "license": "UNLICENSED",
+  "engines": { "node": ">=24" },
+  "scripts": { "test": "node --test test/*.test.js" }
+}
