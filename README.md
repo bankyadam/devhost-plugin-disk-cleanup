@@ -1,10 +1,10 @@
 # devhost-plugin-disk-cleanup
 
-A [devhost](https://github.com/bankyadam/devhost.app) plugin that frees disk space on the Mac mini without losing anything:
+A [devhost](https://github.com/bankyadam/devhost.app) plugin that frees disk space on the Mac mini without losing committed or tracked work:
 
 - the **Homebrew** download cache (`brew cleanup -s --prune=all`),
 - the **npm** cache (`npm cache clean --force`, the npm next to the Node devhost runs on),
-- old **Remote Control worktrees** (`<environment>/.claude/worktrees/*`, one per session), removed with `git worktree remove` (no `--force`), and only when the worktree is clean, every commit in it is on a remote, no process works in it, its session is not active, and it was not used for `worktreeIdleHours`.
+- old **Remote Control worktrees** (`<environment>/.claude/worktrees/*`, one per session), removed with `git worktree remove` (no `--force`), and only when the worktree is clean, every commit in it is on a remote, no process works in it, its session is not active, and it was not used for `worktreeIdleHours`. Ignored files that are not build output (`.env`, local config; `node_modules`, `dist`, `target`, caches go) keep the worktree, because they would be lost with it. A mistyped number option falls back to its default.
 
 ## Install
 

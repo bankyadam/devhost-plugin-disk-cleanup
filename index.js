@@ -8,10 +8,15 @@
  * not touched for `worktreeIdleHours` (default 24). Options: `categories` (default all),
  * `warnGiB` (doctor warns above it, default 5).
  */
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'));
 const GiB = 1024 ** 3;
+/** Ignored files that are build output or caches: they go with the worktree. Anything else ignored (.env, local config) stays. */
+const DISPOSABLE = /^(node_modules|dist|build|out|target|coverage|\.next|\.nuxt|\.turbo|\.cache|\.venv|venv|__pycache__|\.pytest_cache|\.DS_Store)(\/|$)/;
+/** A non-negative number option, else the default (a typo must not switch a safety margin off). */
+const numberOption = (v, fallback) => (v !== undefined && v !== null && v !== '' && Number.isFinite(Number(v)) && Number(v) >= 0 ? Number(v) : fallback);
 const CATEGORIES = ['homebrew', 'npm', 'worktrees'];
 const human = (bytes) => (bytes >= GiB ? `${(bytes / GiB).toFixed(1)} GB` : `${Math.round(bytes / 1024 ** 2)} MB`);
 /** Bytes under a path (`du -sk`); 0 when it cannot be measured. */
@@ -46,7 +51,7 @@ async function processCwds(ctx) {
     return r.stdout.split('\n').filter((l) => l.startsWith('n/')).map((l) => l.slice(1));
 }
 async function worktrees(ctx, now) {
-    const idleHours = Number(ctx.options['worktreeIdleHours'] ?? 24);
+    const idleHours = numberOption(ctx.options['worktreeIdleHours'], 24);
     const busy = await processCwds(ctx);
     const active = new Set((await ctx.sessions()).filter((x) => x.state !== 'ended').map((x) => x.cwd));
     const out = [];
@@ -61,14 +66,18 @@ async function worktrees(ctx, now) {
         }
         for (const name of names) {
             const path = join(root, name);
+            let status;
             const w = { env: e.name, path, bytes: await du(ctx, path) };
-            const git = (args) => ctx.exec.query('git', ['-C', path, ...args]);
+            // --no-optional-locks: looking must not rewrite the index (its mtime is the "last used" signal).
+            const git = (args) => ctx.exec.query('git', ['-C', path, '--no-optional-locks', ...args]);
             if (busy.some((c) => c === path || c.startsWith(`${path}/`)))
                 w.keep = 'a process is working in it';
             else if (active.has(path))
                 w.keep = 'its session is still active';
-            else if ((await git(['status', '--porcelain'])).stdout.trim() !== '')
+            else if ((status = (await git(['status', '--porcelain', '--ignored'])).stdout.split('\n').filter(Boolean)).some((l) => !l.startsWith('!! ')))
                 w.keep = 'it has uncommitted changes';
+            else if (status.some((l) => !DISPOSABLE.test(l.slice(3))))
+                w.keep = 'it has ignored files that are not build output (.env, local config)';
             else {
                 const unpushed = await git(['rev-list', '--count', 'HEAD', '--not', '--remotes']);
                 if (unpushed.code !== 0)
@@ -99,6 +108,16 @@ async function report(ctx, now) {
         worktrees: on.has('worktrees') ? await worktrees(ctx, now) : [],
     };
 }
+let cache = null;
+/** doctor runs every check often; sizing every worktree each time is slow, so it reuses a minute-old report. */
+async function cachedReport(ctx) {
+    const key = JSON.stringify([ctx.options['categories'], ctx.options['worktreeIdleHours'], ctx.environments.map((e) => e.dir)]);
+    if (cache && cache.key === key && Date.now() - cache.at < 60_000)
+        return cache.r;
+    const r = await report(ctx, Date.now());
+    cache = { key, at: Date.now(), r };
+    return r;
+}
 const reclaimable = (r) => (r.homebrew?.bytes ?? 0) + (r.npm?.bytes ?? 0) + r.worktrees.filter((w) => !w.keep).reduce((n, w) => n + w.bytes, 0);
 function describe(r) {
     const parts = [
@@ -111,7 +130,7 @@ function describe(r) {
 const data = (r) => ({ reclaimableBytes: reclaimable(r), homebrew: r.homebrew, npm: r.npm, worktrees: r.worktrees });
 export const diskCleanup = {
     name: 'disk-cleanup',
-    version: '1.0.1',
+    version: pkg.version,
     description: 'Free disk space: package caches and old Remote Control worktrees',
     actions: [
         {
@@ -147,7 +166,7 @@ export const diskCleanup = {
                     else
                         ctx.exec.warn(`kept ${w.path}: ${res.stderr.trim() || 'git worktree remove failed'}`);
                 }
-                return { summary: `freed about ${human(reclaimable({ ...r, worktrees: r.worktrees.filter((w) => removed.includes(w.path)) }))} (${describe(r).replace(/ reclaimable:/, ':')})`, data: { ...data(r), removedWorktrees: removed } };
+                return { summary: `${ctx.exec.dryRun ? 'would free' : 'freed'} about ${human(reclaimable({ ...r, worktrees: r.worktrees.filter((w) => removed.includes(w.path)) }))} (${describe(r).replace(/ reclaimable:/, ':')})`, data: { ...data(r), removedWorktrees: removed } };
             },
         },
     ],
@@ -155,8 +174,8 @@ export const diskCleanup = {
         {
             id: 'reclaimable',
             async run(ctx) {
-                const r = await report(ctx, Date.now());
-                const warnAt = Number(ctx.options['warnGiB'] ?? 5) * GiB;
+                const r = await cachedReport(ctx);
+                const warnAt = numberOption(ctx.options['warnGiB'], 5) * GiB;
                 return reclaimable(r) > warnAt
                     ? { status: 'warn', message: describe(r), fix: 'devhost plugin run disk-cleanup clean' }
                     : { status: 'ok', message: describe(r) };

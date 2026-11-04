@@ -5,6 +5,7 @@ export function fakeContext({ rules = [], dryRun = false, ...rest } = {}) {
   const calls = [];
   const plan = [];
   const warnings = [];
+  const waits = [];
   const run = (command, args, opts) => {
     const line = [command, ...args].join(' ');
     calls.push(line);
@@ -30,7 +31,8 @@ export function fakeContext({ rules = [], dryRun = false, ...rest } = {}) {
       if (r.code !== 0 && !opts.allowFailure) throw new Error(`${command} ${args.join(' ')} failed with exit code ${r.code}`);
       return r;
     },
-    async waitFor(probe, attempts = 10) {
+    async waitFor(probe, attempts = 10, delayMs = 1000) {
+      waits.push({ attempts, delayMs });
       if (dryRun) return true;
       for (let i = 0; i < attempts; i++) if (await probe()) return true;
       return false;
@@ -41,6 +43,7 @@ export function fakeContext({ rules = [], dryRun = false, ...rest } = {}) {
   };
   return {
     calls,
+    waits,
     ctx: {
       options: {},
       home: '/Users/x',
